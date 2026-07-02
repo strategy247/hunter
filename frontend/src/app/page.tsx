@@ -9,7 +9,7 @@ import {
 import {
   getLeads, LeadSummary, OutreachStatus, OutreachType
 } from "@/lib/supabase";
-import { formatCurrency, formatDate, statusColor, statusLabel, roundBadgeColor, roundBadgeStyle } from "@/lib/utils";
+import { formatCurrency, formatDate, statusColor, statusLabel, roundBadgeStyle } from "@/lib/utils";
 
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
