@@ -46,17 +46,17 @@ export function statusColor(status: OutreachStatus | null | undefined): string {
   return status ? map[status] ?? "bg-gray-100 text-gray-600" : "bg-gray-100 text-gray-600";
 }
 
-export function roundBadgeColor(round: string): string {
-  return "";
-}
-
 export function roundBadgeStyle(round: string): React.CSSProperties {
   const map: Record<string, React.CSSProperties> = {
-    "Pre-Seed": { background: "#F3F4F6", color: "#4B5563" },
-    "Seed":     { background: "#DCFCE7", color: "#15803D" },
-    "Series A": { background: "#DBEAFE", color: "#1D4ED8" },
-    "Series B": { background: "#EDE9FE", color: "#6D28D9" },
-    "Series C+":{ background: "#FEE2E2", color: "#B91C1C" },
+    "Pre-Seed": { background: "#F3F4F6", color: "#6B7280" },    // gray
+    "Seed":     { background: "#FEF9C3", color: "#854D0E" },    // yellow
+    "Series A": { background: "#DCFCE7", color: "#166534" },    // green
+    "Series B": { background: "#DBEAFE", color: "#1E40AF" },    // blue
+    "Series C": { background: "#EDE9FE", color: "#5B21B6" },    // purple
+    "Series D": { background: "#FCE7F3", color: "#9D174D" },    // pink
+    "Series E": { background: "#FEE2E2", color: "#991B1B" },    // red
+    "Series F": { background: "#FEF3C7", color: "#92400E" },    // amber
+    "Series C+":{ background: "#EDE9FE", color: "#5B21B6" },    // purple (legacy)
   };
-  return map[round] ?? { background: "#F3F4F6", color: "#4B5563" };
+  return map[round] ?? { background: "#F3F4F6", color: "#6B7280" };
 }

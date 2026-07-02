@@ -144,15 +144,21 @@ def _t(root: ET.Element, path: str, ns: str = "") -> str:
 def infer_round_name(amount: Optional[float]) -> str:
     if amount is None:
         return ""
-    if amount < 1_000_000:
+    if amount < 500_000:
         return "Pre-Seed"
     if amount < 3_000_000:
         return "Seed"
     if amount < 15_000_000:
         return "Series A"
-    if amount < 50_000_000:
+    if amount < 40_000_000:
         return "Series B"
-    return "Series C+"
+    if amount < 75_000_000:
+        return "Series C"
+    if amount < 150_000_000:
+        return "Series D"
+    if amount < 300_000_000:
+        return "Series E"
+    return "Series F"
 
 
 def parse_xml(root: ET.Element, cik: str, accession_no: str, filing_date: str) -> Optional[ParsedFiling]:

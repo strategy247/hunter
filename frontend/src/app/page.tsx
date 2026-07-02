@@ -22,7 +22,7 @@ const STATUSES: OutreachStatus[] = [
   "new","reviewing","contacted","responded","interviewing","offer","not_interested","closed_won"
 ];
 
-const ROUND_NAMES = ["Pre-Seed","Seed","Series A","Series B","Series C+"];
+const ROUND_NAMES = ["Pre-Seed", "Seed", "Series A", "Series B", "Series C", "Series D", "Series E", "Series F"];
 
 export default function LeadsPage() {
   const router = useRouter();
