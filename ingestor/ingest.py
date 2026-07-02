@@ -31,12 +31,13 @@ from supabase import create_client, Client
 # Copy these from your Supabase project → Settings → API
 
 
-DEFAULT_MIN_AMOUNT = 2_000_000
-DEFAULT_MAX_AMOUNT = 50_000_000
+DEFAULT_MIN_AMOUNT = 500_000
+DEFAULT_MAX_AMOUNT = 500_000_000
 
 TECH_KEYWORDS = [
-    "software", "technology", "platform", "artificial intelligence",
-    "machine learning", "fintech", "cloud", "cybersecurity", "marketplace",
+    "software", "technology", "artificial intelligence",
+    "machine learning", "fintech", "cybersecurity", "marketplace",
+    "startup", "venture", "equity",
 ]
 
 TECH_INDUSTRY_CODES = {
