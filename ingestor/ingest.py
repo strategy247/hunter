@@ -22,9 +22,9 @@ import argparse
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from dataclasses import dataclass
 from typing import Optional
 from supabase import create_client, Client
+from parse_formd import parse_xml_full
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -60,28 +60,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-
-# ── Data Model ────────────────────────────────────────────────────────────────
-
-@dataclass
-class ParsedFiling:
-    # leads table
-    cik: str
-    accession_no: str
-    company_name: str
-    filing_date: str
-    state: str
-    city: str
-    amount_raised: Optional[float]
-    amount_offered: Optional[float]
-    industry: str
-    security_type: str
-    date_first_sale: str
-    num_investors: Optional[int]
-    edgar_url: str
-    # related persons — stored separately in lead_persons
-    persons: list[dict]   # [{"name": str, "roles": [str], "is_executive": bool}]
 
 
 # ── EDGAR Fetchers ────────────────────────────────────────────────────────────
@@ -133,13 +111,7 @@ def fetch_form_d_xml(cik: str, accession_no: str) -> Optional[ET.Element]:
         return None
 
 
-# ── Form D XML Parser ─────────────────────────────────────────────────────────
-
-def _t(root: ET.Element, path: str, ns: str = "") -> str:
-    tag = f"{{{ns}}}{path}" if ns else path
-    node = root.find(f".//{tag}")
-    return (node.text or "").strip() if node is not None else ""
-
+# ── Form D XML Parser (see parse_formd.py) ────────────────────────────────────
 
 def infer_round_name(amount: Optional[float]) -> str:
     if amount is None:
@@ -161,108 +133,33 @@ def infer_round_name(amount: Optional[float]) -> str:
     return "Series F"
 
 
-def parse_xml(root: ET.Element, cik: str, accession_no: str, filing_date: str) -> Optional[ParsedFiling]:
-    ns = "http://www.sec.gov/edgar/document/formd"
-
-    def t(path):
-        return _t(root, path, ns) or _t(root, path)
-
-    company_name = t("entityName") or t("issuerName")
-    if not company_name:
-        return None
-
-    amount_raised = _to_float(t("totalAmountSold"))
-    amount_offered = _to_float(t("totalOfferingAmount"))
-
-    # Parse related persons
-    persons = []
-    for node in root.iter():
-        if "relatedPersonInfo" not in node.tag:
-            continue
-        fn_node = node.find(f".//{{{ns}}}firstName") or node.find(".//firstName")
-        ln_node = node.find(f".//{{{ns}}}lastName") or node.find(".//lastName")
-        rel_node = node.find(f".//{{{ns}}}relationships") or node.find(".//relationships")
-        first = (fn_node.text or "").strip() if fn_node is not None else ""
-        last = (ln_node.text or "").strip() if ln_node is not None else ""
-        name = f"{first} {last}".strip()
-        if not name:
-            continue
-        roles = []
-        if rel_node is not None:
-            for rel in rel_node:
-                tag = rel.tag.split("}")[-1] if "}" in rel.tag else rel.tag
-                if (rel.text or "").strip().lower() in ("true", "1"):
-                    roles.append(tag)
-        is_exec = any(r in ("executiveOfficer", "officer", "director") for r in roles)
-        persons.append({"name": name, "roles": roles, "is_executive": is_exec})
-
-    edgar_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=D&dateb=&owner=include&count=10"
-
-    return ParsedFiling(
-        cik=cik,
-        accession_no=accession_no,
-        company_name=company_name,
-        filing_date=filing_date,
-        state=t("issuerAddress/stateOrCountry") or t("stateOrCountry"),
-        city=t("issuerAddress/city") or t("city"),
-        amount_raised=amount_raised,
-        amount_offered=amount_offered,
-        industry=t("industryGroupType") or t("industryGroup"),
-        security_type=t("typesOfSecuritiesOffered") or t("typeOfSecurities"),
-        date_first_sale=t("dateOfFirstSale"),
-        num_investors=int(n) if (n := t("totalNumberAlreadyInvested")).isdigit() else None,
-        edgar_url=edgar_url,
-        persons=persons,
-    )
-
-
-def _to_float(s: str) -> Optional[float]:
-    try:
-        return float(s.replace(",", "")) if s else None
-    except ValueError:
-        return None
-
-
 # ── Filtering ─────────────────────────────────────────────────────────────────
 
-def passes_filters(f: ParsedFiling, min_amt: float, max_amt: float, states: Optional[list]) -> bool:
-    amt = f.amount_raised or f.amount_offered
+def passes_filters(f: dict, min_amt: float, max_amt: float, states: Optional[list]) -> bool:
+    amt = f["amount_raised"] or f["amount_offered"]
     if amt is None or not (min_amt <= amt <= max_amt):
         return False
-    if states and f.state.upper() not in {s.upper() for s in states}:
+    if states and (f["state"] or "").upper() not in {s.upper() for s in states}:
         return False
     return True
 
 
-def is_tech(f: ParsedFiling) -> bool:
-    ind = f.industry.lower()
+def is_tech(f: dict) -> bool:
+    ind = (f["industry"] or "").lower()
     return any(code in ind for code in TECH_INDUSTRY_CODES) or not ind
 
 
 # ── Supabase Writer ───────────────────────────────────────────────────────────
 
-def upsert_to_supabase(client: Client, filings: list[ParsedFiling]):
+def upsert_to_supabase(client: Client, filings: list[dict]):
     log.info(f"Upserting {len(filings)} filings to Supabase...")
     errors = 0
 
     for f in filings:
         try:
-            lead_row = {
-                "cik": f.cik,
-                "accession_no": f.accession_no,
-                "company_name": f.company_name,
-                "filing_date": f.filing_date or None,
-                "state": f.state or None,
-                "city": f.city or None,
-                "amount_raised": f.amount_raised,
-                "amount_offered": f.amount_offered,
-                "industry": f.industry or None,
-                "security_type": f.security_type or None,
-                "date_first_sale": f.date_first_sale or None,
-                "num_investors": f.num_investors,
-                "edgar_url": f.edgar_url,
-                "round_name": infer_round_name(f.amount_raised or f.amount_offered),
-            }
+            lead_row = {k: v for k, v in f.items() if k != "_persons"}
+            lead_row["round_name"] = infer_round_name(f["amount_raised"] or f["amount_offered"])
+            persons = f["_persons"]
 
             # Upsert lead (accession_no is the conflict key)
             result = (
@@ -272,14 +169,14 @@ def upsert_to_supabase(client: Client, filings: list[ParsedFiling]):
             )
 
             if not result.data:
-                log.warning(f"No data returned for {f.company_name}")
+                log.warning(f"No data returned for {f['company_name']}")
                 errors += 1
                 continue
 
             lead_id = result.data[0]["id"]
 
             # Insert persons (delete + re-insert to stay fresh)
-            if f.persons:
+            if persons:
                 client.table("lead_persons").delete().eq("lead_id", lead_id).execute()
                 person_rows = [
                     {
@@ -288,12 +185,12 @@ def upsert_to_supabase(client: Client, filings: list[ParsedFiling]):
                         "roles": p["roles"],
                         "is_executive": p["is_executive"],
                     }
-                    for p in f.persons
+                    for p in persons
                 ]
                 client.table("lead_persons").insert(person_rows).execute()
 
         except Exception as e:
-            log.error(f"Supabase error for {f.company_name}: {e}")
+            log.error(f"Supabase error for {f['company_name']}: {e}")
             errors += 1
 
     log.info(f"Upsert complete. {len(filings) - errors} succeeded, {errors} errors.")
@@ -301,7 +198,7 @@ def upsert_to_supabase(client: Client, filings: list[ParsedFiling]):
 
 # ── CSV Writer ────────────────────────────────────────────────────────────────
 
-def write_csv(filings: list[ParsedFiling], path: str):
+def write_csv(filings: list[dict], path: str):
     fieldnames = [
         "company_name", "filing_date", "state", "city",
         "amount_raised", "amount_offered", "round_name",
@@ -313,24 +210,24 @@ def write_csv(filings: list[ParsedFiling], path: str):
         writer.writeheader()
         for filing in filings:
             execs = "; ".join(
-                f"{p['name']} ({', '.join(p['roles'])})" for p in filing.persons
+                f"{p['name']} ({', '.join(p['roles'])})" for p in filing["_persons"]
             )
             writer.writerow({
-                "company_name": filing.company_name,
-                "filing_date": filing.filing_date,
-                "state": filing.state,
-                "city": filing.city,
-                "amount_raised": filing.amount_raised,
-                "amount_offered": filing.amount_offered,
-                "round_name": infer_round_name(filing.amount_raised or filing.amount_offered),
-                "industry": filing.industry,
-                "security_type": filing.security_type,
-                "date_first_sale": filing.date_first_sale,
-                "num_investors": filing.num_investors,
+                "company_name": filing["company_name"],
+                "filing_date": filing["filing_date"],
+                "state": filing["state"],
+                "city": filing["city"],
+                "amount_raised": filing["amount_raised"],
+                "amount_offered": filing["amount_offered"],
+                "round_name": infer_round_name(filing["amount_raised"] or filing["amount_offered"]),
+                "industry": filing["industry"],
+                "security_type": filing["security_type"],
+                "date_first_sale": filing["date_first_sale"],
+                "num_investors": filing["num_investors"],
                 "executives": execs,
-                "cik": filing.cik,
-                "accession_no": filing.accession_no,
-                "edgar_url": filing.edgar_url,
+                "cik": filing["cik"],
+                "accession_no": filing["accession_no"],
+                "edgar_url": filing["edgar_url"],
             })
     log.info(f"CSV written to {path}")
 
@@ -368,7 +265,7 @@ def run(days=90, min_amount=DEFAULT_MIN_AMOUNT, max_amount=DEFAULT_MAX_AMOUNT,
     log.info(f"Unique Form D filings found: {len(all_hits)}")
 
     # ── Fetch + parse XML ──
-    parsed: list[ParsedFiling] = []
+    parsed: list[dict] = []
     for i, (acc_no, meta) in enumerate(all_hits.items(), 1):
         cik = str(meta.get("entity_id", "")).lstrip("0") or acc_no.split("-")[0].lstrip("0")
         if not cik:
@@ -377,7 +274,7 @@ def run(days=90, min_amount=DEFAULT_MIN_AMOUNT, max_amount=DEFAULT_MAX_AMOUNT,
         root = fetch_form_d_xml(cik, acc_no)
         if root is None:
             continue
-        filing = parse_xml(root, cik, acc_no, meta.get("file_date", ""))
+        filing = parse_xml_full(root, cik, acc_no, meta.get("file_date", ""))
         if filing:
             parsed.append(filing)
 
@@ -386,10 +283,10 @@ def run(days=90, min_amount=DEFAULT_MIN_AMOUNT, max_amount=DEFAULT_MAX_AMOUNT,
     log.info(f"After filters: {len(filtered)} filings")
 
     # ── Deduplicate by CIK ──
-    seen: dict[str, ParsedFiling] = {}
-    for f in sorted(filtered, key=lambda x: x.filing_date, reverse=True):
-        if f.cik not in seen:
-            seen[f.cik] = f
+    seen: dict[str, dict] = {}
+    for f in sorted(filtered, key=lambda x: x["filing_date"] or "", reverse=True):
+        if f["cik"] not in seen:
+            seen[f["cik"]] = f
     final = list(seen.values())
     log.info(f"After dedup: {len(final)} unique companies")
 

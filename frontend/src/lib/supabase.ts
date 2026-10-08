@@ -43,6 +43,22 @@ export interface LeadDetail extends LeadSummary {
   date_first_sale: string | null;
   cik: string;
   accession_no: string;
+  phone: string | null;
+  street1: string | null;
+  street2: string | null;
+  zip_code: string | null;
+  jurisdiction_inc: string | null;
+  entity_type: string | null;
+  year_inc: string | null;
+  revenue_range: string | null;
+  federal_exemptions: string | null;
+  is_amendment: boolean | null;
+  sic_code: string | null;
+  min_investment: number | null;
+  has_non_accredited: boolean | null;
+  num_non_accredited: number | null;
+  sales_commissions: number | null;
+  finders_fee: number | null;
 }
 
 export interface LeadPerson {
@@ -127,6 +143,20 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
     .from("leads")
     .select("*")
     .eq("id", id)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateLead(
+  id: string,
+  updates: Partial<LeadDetail>
+): Promise<LeadDetail> {
+  const { data, error } = await supabase
+    .from("leads")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
     .single();
   if (error) throw error;
   return data;

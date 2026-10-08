@@ -22,7 +22,9 @@ alter table leads
   add column if not exists finders_fee        numeric;
 
 -- Update leads_summary view to include new fields
-create or replace view leads_summary as
+-- (drop first: create-or-replace can only append columns, and these are inserted mid-list)
+drop view if exists leads_summary;
+create view leads_summary as
 select
   l.id,
   l.company_name,
