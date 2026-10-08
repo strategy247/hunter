@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, ExternalLink, Linkedin, Globe, Plus, Save,
-  User, Users, DollarSign, FileText, Building2
+  User, Users, DollarSign, FileText, Building2, Search, Info
 } from "lucide-react";
 import {
   getLead, getLeadPersons, getLeadInvestors, getNotes, getOutreach,
-  addNote, upsertOutreach, addInvestor,
+  addNote, upsertOutreach, addInvestor, updateLead,
   LeadDetail, LeadPerson, LeadInvestor, Note, Outreach,
   OutreachStatus, OutreachType,
 } from "@/lib/supabase";
@@ -35,6 +35,11 @@ export default function LeadDetailPage() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [outreach, setOutreach] = useState<Outreach | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Overview form state
+  const [overviewForm, setOverviewForm] = useState({ description: "", website: "" });
+  const [savingOverview, setSavingOverview] = useState(false);
+  const [overviewSaved, setOverviewSaved] = useState(false);
 
   // Outreach form state
   const [outreachForm, setOutreachForm] = useState<{
@@ -78,6 +83,12 @@ export default function LeadDetailPage() {
       setInvestors(investors);
       setNotes(notes);
       setOutreach(outreach);
+      if (lead) {
+        setOverviewForm({
+          description: lead.description ?? "",
+          website: lead.website ?? "",
+        });
+      }
       if (outreach) {
         setOutreachForm({
           status: outreach.status,
@@ -92,6 +103,19 @@ export default function LeadDetailPage() {
       setLoading(false);
     });
   }, [id]);
+
+  const saveOverview = async () => {
+    if (!id) return;
+    setSavingOverview(true);
+    await updateLead(id, {
+      description: overviewForm.description || null,
+      website: overviewForm.website || null,
+    });
+    setLead(prev => prev ? { ...prev, ...overviewForm } : prev);
+    setSavingOverview(false);
+    setOverviewSaved(true);
+    setTimeout(() => setOverviewSaved(false), 2000);
+  };
 
   const saveOutreach = async () => {
     if (!id) return;
@@ -121,6 +145,13 @@ export default function LeadDetailPage() {
     setNewInvestorIsLead(false);
   };
 
+  // Smart company link: website if available, Google search otherwise
+  const companyLink = (lead: LeadDetail) => {
+    if (lead.website) return lead.website;
+    const query = encodeURIComponent(`${lead.company_name} ${lead.city ?? ""} ${lead.state ?? ""} startup`);
+    return `https://www.google.com/search?q=${query}`;
+  };
+
   if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">Loading…</div>;
   if (!lead) return <div className="p-8 text-gray-500">Lead not found.</div>;
 
@@ -130,14 +161,28 @@ export default function LeadDetailPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="max-w-screen-lg mx-auto">
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.back()}
             className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-3"
           >
             <ArrowLeft size={14} /> Back to Leads
           </button>
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">{lead.company_name}</h1>
+              <div className="flex items-center gap-2">
+                <a
+                  href={companyLink(lead)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-2xl font-semibold text-gray-900 hover:text-indigo-600 transition-colors flex items-center gap-1.5"
+                  title={lead.website ? `Visit ${lead.website}` : `Search Google for ${lead.company_name}`}
+                >
+                  {lead.company_name}
+                  {lead.website
+                    ? <Globe size={16} className="text-gray-400" />
+                    : <Search size={16} className="text-gray-400" />
+                  }
+                </a>
+              </div>
               <p className="text-sm text-gray-500 mt-1">
                 {lead.city}, {lead.state} · Filed {formatDate(lead.filing_date ?? "")}
                 {lead.round_name && (
@@ -148,12 +193,6 @@ export default function LeadDetailPage() {
               </p>
             </div>
             <div className="flex gap-2">
-              {lead.website && (
-                <a href={lead.website} target="_blank" rel="noreferrer"
-                   className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <Globe size={13}/> Website
-                </a>
-              )}
               {lead.linkedin_url && (
                 <a href={lead.linkedin_url} target="_blank" rel="noreferrer"
                    className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
@@ -171,10 +210,46 @@ export default function LeadDetailPage() {
 
       <div className="max-w-screen-lg mx-auto px-6 py-6 grid grid-cols-3 gap-6">
 
-        {/* Left column — funding, people, investors */}
+        {/* Left column */}
         <div className="col-span-2 space-y-5">
 
-          {/* Funding Summary */}
+          {/* Overview — above Funding */}
+          <Section icon={<Info size={15}/>} title="Overview">
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Summary</label>
+                <textarea
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none"
+                  rows={3}
+                  placeholder="What does this company do? Auto-populated from TechCrunch when available, or enter manually."
+                  value={overviewForm.description}
+                  onChange={e => setOverviewForm(f => ({ ...f, description: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Website</label>
+                <input
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"
+                  placeholder="https://company.com"
+                  value={overviewForm.website}
+                  onChange={e => setOverviewForm(f => ({ ...f, website: e.target.value }))}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  When populated, the company name above links directly to this URL.
+                </p>
+              </div>
+              <button
+                onClick={saveOverview}
+                disabled={savingOverview}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-40"
+              >
+                <Save size={13}/>
+                {savingOverview ? "Saving…" : overviewSaved ? "Saved ✓" : "Save Overview"}
+              </button>
+            </div>
+          </Section>
+
+          {/* Funding */}
           <Section icon={<DollarSign size={15}/>} title="Funding">
             <div className="grid grid-cols-3 gap-4">
               <Stat label="Amount Raised" value={formatCurrency(lead.amount_raised)} />
