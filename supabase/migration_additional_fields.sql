@@ -3,6 +3,17 @@
 -- Run in Supabase SQL editor
 -- ============================================================
 
+-- Enrichment columns (from migration_enrichment.sql; safe to re-run)
+alter table leads
+  add column if not exists x_url               text,
+  add column if not exists article_urls        text[],
+  add column if not exists enrichment_sources  jsonb default '{}',
+  add column if not exists enrichment_confidence integer default 0;
+
+alter table lead_investors
+  add column if not exists confirmed_by text[] default '{}';
+
+-- Additional Form D fields
 alter table leads
   add column if not exists phone              text,
   add column if not exists street1            text,
