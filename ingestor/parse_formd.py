@@ -13,6 +13,33 @@ def _t(root: ET.Element, path: str, ns: str = "") -> str:
     return (node.text or "").strip() if node is not None else ""
 
 
+def _local(tag: str) -> str:
+    return tag.split("}")[-1]
+
+
+def _path_text(root: ET.Element, *names: str) -> str:
+    """Text of the element reached by names[0] (anywhere) then direct children names[1:]."""
+    for node in root.iter():
+        if _local(node.tag) != names[0]:
+            continue
+        cur = node
+        for name in names[1:]:
+            cur = next((c for c in cur if _local(c.tag) == name), None)
+            if cur is None:
+                break
+        else:
+            return (cur.text or "").strip()
+    return ""
+
+
+def _true_flags(root: ET.Element, parent: str) -> list[str]:
+    """Names of child elements under `parent` whose text is true."""
+    for node in root.iter():
+        if _local(node.tag) == parent:
+            return [_local(c.tag) for c in node if (c.text or "").strip().lower() == "true"]
+    return []
+
+
 def _to_float(s: str) -> Optional[float]:
     try:
         return float(s.replace(",", "").replace("$", "")) if s else None
@@ -37,14 +64,24 @@ def parse_xml_full(root: ET.Element, cik: str, accession_no: str, filing_date: s
     amount_raised  = _to_float(t("totalAmountSold"))
     amount_offered = _to_float(t("totalOfferingAmount"))
 
-    # Federal exemptions
+    # Federal exemptions: <federalExemptionsExclusions><item>06b</item>...
     exemptions = []
     for node in root.iter():
-        tag = node.tag.split("}")[-1] if "}" in node.tag else node.tag
-        if "exemption" in tag.lower() or "rule506" in tag.lower() or "rule504" in tag.lower():
-            val = (node.text or "").strip()
-            if val and val not in exemptions:
-                exemptions.append(val)
+        if _local(node.tag) == "federalExemptionsExclusions":
+            exemptions = [(c.text or "").strip() for c in node if (c.text or "").strip()]
+            break
+
+    # Security types: flags such as isEquityType, isOptionToAcquireType
+    security_type = ", ".join(
+        f.removeprefix("is").removesuffix("Type") for f in _true_flags(root, "typesOfSecuritiesOffered")
+    )
+
+    # Year of incorporation: <yearOfInc><value>2019</value> or <overFiveYears>true</overFiveYears>
+    year_inc = _path_text(root, "yearOfInc", "value")
+    if not year_inc:
+        flags = _true_flags(root, "yearOfInc")
+        year_inc = {"overFiveYears": "Over five years ago", "withinFiveYears": "Within last five years",
+                    "yetToBeFormed": "Yet to be formed"}.get(flags[0], flags[0]) if flags else ""
 
     # Related persons
     persons = []
@@ -54,7 +91,6 @@ def parse_xml_full(root: ET.Element, cik: str, accession_no: str, filing_date: s
         fn = node.find(f".//{{{ns}}}firstName") or node.find(".//firstName")
         ln = node.find(f".//{{{ns}}}lastName") or node.find(".//lastName")
         mn = node.find(f".//{{{ns}}}middleName") or node.find(".//middleName")
-        rel = node.find(f".//{{{ns}}}relationships") or node.find(".//relationships")
 
         first  = (fn.text or "").strip() if fn is not None else ""
         middle = (mn.text or "").strip() if mn is not None else ""
@@ -64,14 +100,11 @@ def parse_xml_full(root: ET.Element, cik: str, accession_no: str, filing_date: s
         p_state = _t(node, "stateOrCountry", ns) or _t(node, "stateOrCountry")
         clarification = _t(node, "relationshipClarification", ns) or _t(node, "relationshipClarification")
 
-        roles = []
-        if rel is not None:
-            for r in rel:
-                tag = r.tag.split("}")[-1] if "}" in r.tag else r.tag
-                if (r.text or "").strip().lower() in ("true", "1"):
-                    roles.append(tag)
-
-        is_exec = any(r in ("executiveOfficer", "officer", "director") for r in roles)
+        roles = [
+            (r.text or "").strip() for r in node.iter()
+            if _local(r.tag) == "relationship" and (r.text or "").strip()
+        ]
+        is_exec = any(r.lower() in ("executive officer", "director") for r in roles)
 
         if name:
             persons.append({
@@ -100,13 +133,13 @@ def parse_xml_full(root: ET.Element, cik: str, accession_no: str, filing_date: s
         "phone":             t("issuerPhoneNumber") or t("phoneNumber") or None,
         "entity_type":       t("entityType") or None,
         "jurisdiction_inc":  t("jurisdictionOfInc") or None,
-        "year_inc":          t("yearOfIncorporation") or t("yearOfInc") or None,
+        "year_inc":          year_inc or None,
         "amount_raised":     amount_raised,
         "amount_offered":    amount_offered,
         "industry":          t("industryGroupType") or t("industryGroup") or None,
         "sic_code":          t("sicCode") or None,
-        "security_type":     t("typesOfSecuritiesOffered") or t("typeOfSecurities") or None,
-        "date_first_sale":   t("dateOfFirstSale") or None,
+        "security_type":     security_type or None,
+        "date_first_sale":   _path_text(root, "dateOfFirstSale", "value") or None,
         "revenue_range":     t("revenueRange") or None,
         "federal_exemptions": ", ".join(exemptions) if exemptions else None,
         "is_amendment":      _to_bool(t("isAmendment")) if t("isAmendment") else False,
@@ -114,8 +147,8 @@ def parse_xml_full(root: ET.Element, cik: str, accession_no: str, filing_date: s
         "has_non_accredited": _to_bool(t("hasNonAccreditedInvestors")),
         "num_non_accredited": int(n) if (n := t("numberOfNonAccreditedInvestors")).isdigit() else None,
         "num_investors":     int(n) if (n := t("totalNumberAlreadyInvested")).isdigit() else None,
-        "sales_commissions": _to_float(t("salesCommissionsDollarAmount")),
-        "finders_fee":       _to_float(t("findersFeesDollarAmount")),
+        "sales_commissions": _to_float(_path_text(root, "salesCommissions", "dollarAmount")),
+        "finders_fee":       _to_float(_path_text(root, "findersFees", "dollarAmount")),
         "edgar_url":         edgar_url,
         "_persons":          persons,
     }
